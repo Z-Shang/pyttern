@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-VERSION = "0.0.1"
+VERSION = "0.0.3"
 
 DESCRIPTION = "Python module for simple pattern matching"
 CLASSIFIERS = [
@@ -33,7 +33,7 @@ def main():
         "author_email": "z@gilgamesh.me",
         "classifiers": CLASSIFIERS,
         "packages": [
-            "src",
+            "pyttern",
         ],
     }
     setup(**options)
