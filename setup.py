@@ -35,6 +35,7 @@ def main():
         "packages": [
             "pyttern",
         ],
+        "install_requires": ["bytecode", "fppy"],
     }
     setup(**options)
 
