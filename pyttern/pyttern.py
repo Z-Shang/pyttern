@@ -10,7 +10,6 @@ from fpy.composable.collections import is_, of_, and_, or_
 from fpy.experimental.do import do
 from fpy.data.maybe import Just, Nothing, isJust, fromJust
 
-
 isInstr = is_(bc.Instr)
 popTop = and_(isInstr, __.name == "POP_TOP")
 none = and_(isInstr, and_(__.name == "LOAD_CONST", __.arg == None))
@@ -19,18 +18,26 @@ ending = one(popTop) >> one(none)>> one(ret)
 mkConstMap = and_(isInstr, __.name == "BUILD_CONST_KEY_MAP")
 mkMap = and_(isInstr, __.name == "BUILD_MAP")
 isArg = and_(isInstr, __.name == "LOAD_FAST")
+isLoadGlobal = and_(isInstr, __.name == "LOAD_GLOBAL")
+isWildcard = and_(isLoadGlobal, __.arg == "_")
+isVarName = lambda x: x != "_" and x.startswith("_")
+isVar = and_(isLoadGlobal, __.arg ^ isVarName)
 
 varMapEnding = one(mkMap) << ending
 constMapEnding = one(mkConstMap) << ending
 
 
-def exprToLambda(b, place, filename, args, fv):
+def exprToLambda(b, place, filename, args, fv, v=None):
     varMap = {arg : _fresh(arg) for arg in args}
     mod_b = []
     for instr in b:
         if isArg(instr):
             name = instr.arg
             instr.arg = varMap[name]
+        if isVar(instr):
+            name = instr.arg
+            assert name in v, f"Variable: {name} is not bound"
+            instr = bc.Instr("LOAD_FAST", varMap[v[name]])
         mod_b.append(instr)
     mod_b.append(bc.Instr("RETURN_VALUE"))
     lm = bc.Bytecode(mod_b)
@@ -93,7 +100,6 @@ def partitionInst(insts, n):
 
 
 def transConstMap(b, mk, fn_name, filename, args, fv):
-    print(f"Const Map: {fn_name}")
     body = b[:-4]
     keynames = body[-1]
     exprs = []
@@ -119,9 +125,53 @@ def transConstMap(b, mk, fn_name, filename, args, fv):
 
 
 def transVarMap(b, mk, fn_name, filename, args, fv):
-    print(f"Var Map: {fn_name}")
     body = b[:-4]
-    print(body)
+    parts = []
+    rest = body
+    hasDefault = False
+    defaultExpr = []
+    while rest:
+        part, rest = partitionInst(rest, 2)
+        expr, pat = partitionInst(part, 1)
+        if isWildcard(pat[0]) and len(pat) == 1:
+            assert not hasDefault, f"Duplicated default cases in {fn_name}, line {pat[0].lineno} @ {filename}"
+            hasDefault = True
+            defaultExpr = exprToLambda(expr, fn_name, filename, args, fv)
+        else:
+            vbind = {}
+            vpat = []
+            for i, v in enumerate(pat):
+                if isVar(v):
+                    vbind[v.arg] = args[i]
+                    vpat.append(bc.Instr("LOAD_CONST", _v(v.arg)))
+                else:
+                    vpat.append(v)
+            parts.append((vpat, exprToLambda(expr, fn_name, filename, args, fv, vbind)))
+    if not hasDefault:
+        defaultExpr = generateDefault(fn_name, filename, args)
+    defaultPat = []
+    for _ in args:
+        defaultPat.append(bc.Instr("LOAD_CONST", _v()))
+    defaultPat.append(bc.Instr("BUILD_TUPLE", len(args)))
+    resbc = bc.Bytecode([bc.Instr("LOAD_CONST", pytternd)])
+    for pat, expr in reversed(parts):
+        resbc.extend(pat)
+        resbc.extend(expr)
+    resbc.extend(defaultPat)
+    resbc.extend(defaultExpr)
+    if not hasDefault:
+        mk.arg += 1
+    resbc.append(mk)
+    resbc.append(bc.Instr("CALL_FUNCTION", 1))
+    for arg in args:
+        resbc.append(bc.Instr("LOAD_FAST", arg))
+    resbc.append(bc.Instr("BUILD_TUPLE", arg=len(args)))
+    resbc.append(bc.Instr("BINARY_SUBSCR"))
+    for arg in args:
+        resbc.append(bc.Instr("LOAD_FAST", arg))
+    resbc.append(bc.Instr("CALL_FUNCTION", arg=len(args)))
+    resbc.append(bc.Instr("RETURN_VALUE"))
+    return resbc
 
 @do(Just)
 def _deco(rawbc, fn_name, filename, args, fv):
@@ -144,7 +194,7 @@ def pyttern(fn):
     argcount = fn.__code__.co_argcount + (1 if isVarargFn(fn) else 0)
     args = fn.__code__.co_varnames[: argcount]
 
-    print( f"Generating pattern matching for function: {fn.__name__} at line: {rawbc.first_lineno} @ {rawbc.filename}")
+    # print( f"Generating pattern matching for function: {fn.__name__} at line: {rawbc.first_lineno} @ {rawbc.filename}")
     resbc = _deco(rawbc, fn.__name__, rawbc.filename, args, rawbc.freevars)
     assert isJust(resbc), f"Failed to generate pattern matching for function: {fn.__name__} at line: {rawbc.first_lineno} @ {rawbc.filename}"
     res = fromJust(resbc)
@@ -161,23 +211,26 @@ def pyttern(fn):
 
 
 if __name__ == "__main__":
-    @pyttern
-    def g(a, *b): {
-        (1, (2,)) : f"{a}, {b}",
-        (3, (4, 5)) : b,
-    }
+    # @pyttern
+    # def g(a, *b): {
+        # (1, (2,)) : f"{a}, {b}",
+        # (3, (4, 5)) : b,
+    # }
 
-    print(g(1, 2))
-    print(g(3, 4, 5))
-    print(g(5, 6))
+    # print(g(1, 2))
+    # print(g(3, 4, 5))
+    # print(g(5, 6))
 
     # @pyttern
     # def f(): {
     # }
 
-    # @pyttern
-    # def h(a, b): {
-        # (_1, _2) : _1 + _2,
-        # (2, _2) : 2
-    # }
+    @pyttern
+    def h(a, b): {
+        (2, _2) : _2 * 2,
+            _ : 100
+    }
+
+    print(h(1, 2))
+    print(h(2, 10))
 
