@@ -1,119 +1,183 @@
-def _fresh(*n, _rec = {}):
-    v = _rec.get(n, 0) + 1
-    _rec[n] = v
-    return "{}{}".format(n, v)
+import bytecode as bc
 
-class _v:
-    def __init__(self, n=None):
-        self.n = n or _fresh("_v")
+from pyttern.core import _fresh, _v, pytternd, NonExhaustivePatternError
 
-    def __hash__(self):
-        return hash(self.n)
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __str__(self):
-        return "#v<{}>".format(self.n)
-
-class NonExhaustivePatternError(Exception):
-    def __init__(self, msg):
-        self.msg = msg
-        super().__init__(self.msg)
+from fpy.data.function import id_, const
+from fpy.parsec.parsec import parser, ptrans, one, many, peek, neg
+from fpy.composable.function import func
+from fpy.utils.placeholder import __
+from fpy.composable.collections import is_, of_, and_, or_
+from fpy.experimental.do import do
+from fpy.data.maybe import Just, Nothing, isJust, fromJust
 
 
-class pytternd:
-    """
-    usage:
-    pytternd(
-        {
-            (1, 2, 3): True
-            (_v(1), _v(2), 4): False
-            ...
-        }
-    )[1, 2, 4] = False
+isInstr = is_(bc.Instr)
+popTop = and_(isInstr, __.name == "POP_TOP")
+none = and_(isInstr, and_(__.name == "LOAD_CONST", __.arg == None))
+ret = and_(isInstr, __.name == "RETURN_VALUE")
+ending = one(popTop) >> one(none)>> one(ret)
+mkConstMap = and_(isInstr, __.name == "BUILD_CONST_KEY_MAP")
+mkMap = and_(isInstr, __.name == "BUILD_MAP")
+isArg = and_(isInstr, __.name == "LOAD_FAST")
 
-    referencing variable in body is not supported until this is made into a decorator
-    """
+varMapEnding = one(mkMap) << ending
+constMapEnding = one(mkConstMap) << ending
 
-    def __init__(self, d: dict):
-        self.orig_d = d
-        self.varp = dict()
-        patlen = [len(k) for k in d.keys()]
-        assert len(set(patlen)) == 1, "Currently patterns must of same length"
-        self._len = patlen[0]
-        self._prepare(d)
 
-    def _prepare(self, d: dict):
-        ks = list(d.keys())
-        if not ks:
-            return d
-        assert not self._check_overlap_q(ks), "Cannot have overlapping patterns"
-        if len(ks[0]) == 1:
-            varp = {}
-            res = {}
-            for k, v in d.items():
-                if isinstance(k[0], _v):
-                    varp[()] = v
-                    continue
-                res[k[0]] = v
-            self.varp = varp
-            self.d = res
-            return
-        new = {}
-        varp = {}
-        for k, v in d.items():
-            if isinstance(k[0], _v):
-                varp[k[1:]] = v
-                continue
-            new[k[0]] = {k[1:] : v, **new.get(k[0], {})}
-        if varp:
-            self.varp = pytternd(varp)
-        self.d = { k: pytternd(v) for k, v in new.items() } if len(ks[0]) > 1 else new
+def exprToLambda(b, place, filename, args, fv):
+    varMap = {arg : _fresh(arg) for arg in args}
+    mod_b = []
+    for instr in b:
+        if isArg(instr):
+            name = instr.arg
+            instr.arg = varMap[name]
+        mod_b.append(instr)
+    mod_b.append(bc.Instr("RETURN_VALUE"))
+    lm = bc.Bytecode(mod_b)
+    lm.freevars.extend(fv)
+    lm.argcount = len(varMap)
+    lm.argnames.extend(list(varMap.values()))
+    lm.name = _fresh(place, "exprlambda")
+    lm.filename = filename
+    lm.flags = lm.flags | 16
+    lm.update_flags()
+    co = lm.to_code()
+    return [bc.Instr("LOAD_CONST", co), bc.Instr("LOAD_CONST", lm.name), bc.Instr("MAKE_FUNCTION", 0)]
 
-    def _check_overlap_q(self, ks):
-        if len(ks[0]) > 1:
-            return False
-        return all([isinstance(k, _v) for k in ks])
+def generateDefault(place, filename, args):
+    varMap = {arg : _fresh(arg) for arg in args}
+    lm = bc.Bytecode([bc.Instr("LOAD_CONST", NonExhaustivePatternError)])
+    lm.append(bc.Instr("LOAD_CONST", f"Non Exhaustive Pattern Matching: {place}"))
+    for k, v in varMap.items():
+        lm.append(bc.Instr("LOAD_CONST", f"\n{k}: "))
+        lm.append(bc.Instr("LOAD_FAST", v))
+        lm.append(bc.Instr("FORMAT_VALUE", 0x02))
+    lm.append(bc.Instr("BUILD_STRING", 1 + 2 * len(varMap)))
+    lm.append(bc.Instr("CALL_FUNCTION", 1))
+    lm.append(bc.Instr("RAISE_VARARGS", 1))
+    lm.argcount = len(varMap)
+    lm.argnames.extend(list(varMap.values()))
+    lm.name = _fresh(place, "defaultcase")
+    lm.filename = filename
+    lm.flags = lm.flags | 16
+    lm.update_flags()
+    co = lm.to_code()
+    return [bc.Instr("LOAD_CONST", co), bc.Instr("LOAD_CONST", lm.name), bc.Instr("MAKE_FUNCTION", 0)]
 
-    def __getitem__(self, vs):
-        x, *xs = vs
-        assert len(vs) == self._len, "Number of value doesn't match pattern length"
 
-        if xs:
-            try:
-                return self.d[x].__getitem__(xs)
-            except Exception as e:
-                if self.varp:
-                    return self.varp.__getitem__(xs)
-                raise NonExhaustivePatternError("There is no pattern matching value: {}".format(vs)) from None
-        try:
-            return self.d[x]
-        except:
-            try:
-                return self.varp[()]
-            except:
-                raise NonExhaustivePatternError("There is no pattern matching value: {}".format(vs)) from None
+def partitionInst(insts, n):
+    if not insts:
+        return [], []
+    if n == 0:
+        return [], insts
+    head = insts[-1]
+    # print(f"{head = }")
+    # print(f"{n = }")
+    pre, post = head.pre_and_post_stack_effect()
+    # print(f"{pre = }")
+    # print(f"{post= }")
+    if pre >= 0:
+        if pre == n:
+            return [head], insts[:-1]
+        if pre < n:
+            nxt, rst = partitionInst(insts[:-1], n - pre)
+            return nxt + [head], rst
+    pre = abs(pre)
+    nxt, rst = partitionInst(insts[:-1], pre)
+    if post == n:
+        return nxt + [head], rst
+    if post < n:
+        head = nxt + [head]
+        nxt, rst = partitionInst(rst, n - post)
+        return nxt + head, rst
 
-    def match(self, *vs, default=None):
-        try:
-            return self.__getitem__(vs)
-        except NonExhaustivePatternError:
-            return default
 
-    def __len__(self):
-        return self._len
+def transConstMap(b, mk, fn_name, filename, args, fv):
+    print(f"Const Map: {fn_name}")
+    body = b[:-4]
+    keynames = body[-1]
+    exprs = []
+    rest = body[:-1]
+    while rest:
+        expr, rest = partitionInst(rest, 1)
+        exprs.append(expr)
+    lms = [exprToLambda(e, fn_name, filename, args, fv) for e in reversed(exprs)]
+    resbc = bc.Bytecode(sum(lms, start=[]))
+    resbc.append(keynames)
+    resbc.append(mk)
+    resbc.append(bc.Instr("LOAD_METHOD", "get"))
+    for arg in args:
+        resbc.append(bc.Instr("LOAD_FAST", arg))
+    resbc.append(bc.Instr("BUILD_TUPLE", arg=len(args)))
+    resbc.extend(generateDefault(fn_name, filename, args))
+    resbc.append(bc.Instr("CALL_METHOD", 2))
+    for arg in args:
+        resbc.append(bc.Instr("LOAD_FAST", arg))
+    resbc.append(bc.Instr("CALL_FUNCTION", arg=len(args)))
+    resbc.append(bc.Instr("RETURN_VALUE"))
+    return resbc
 
-    def __repr__(self):
-        return str({**self.d, ** ({"<v>": self.varp} if self.varp else {})})
+
+def transVarMap(b, mk, fn_name, filename, args, fv):
+    print(f"Var Map: {fn_name}")
+    body = b[:-4]
+    print(body)
+
+@do(Just)
+def _deco(rawbc, fn_name, filename, args, fv):
+    mapType = many(neg(or_(mkConstMap, mkMap))) >> (varMapEnding | constMapEnding)
+    mapEnding, rest <- mapType(rawbc)
+    if rest:
+        Nothing()
+    else:
+        return {
+            'BUILD_MAP' : transVarMap,
+            'BUILD_CONST_KEY_MAP' : transConstMap
+        }[mapEnding[0].name](rawbc, mapEnding[0], fn_name, filename, args, fv)
+
+def isVarargFn(fn):
+    return 1 == ((fn.__code__.co_flags >> 2) & 1)
+
+# Not using the name `match` as it may conflict with the Python one
+def pyttern(fn):
+    rawbc = bc.Bytecode.from_code(fn.__code__)
+    argcount = fn.__code__.co_argcount + (1 if isVarargFn(fn) else 0)
+    args = fn.__code__.co_varnames[: argcount]
+
+    print( f"Generating pattern matching for function: {fn.__name__} at line: {rawbc.first_lineno} @ {rawbc.filename}")
+    resbc = _deco(rawbc, fn.__name__, rawbc.filename, args, rawbc.freevars)
+    assert isJust(resbc), f"Failed to generate pattern matching for function: {fn.__name__} at line: {rawbc.first_lineno} @ {rawbc.filename}"
+    res = fromJust(resbc)
+    res.freevars.extend(rawbc.freevars)
+    res.cellvars.extend(rawbc.cellvars)
+    res.argcount = rawbc.argcount
+    res.argnames.extend(rawbc.argnames)
+    res.name = rawbc.name
+    res.filename = rawbc.filename
+    res.flags = rawbc.flags
+    res.update_flags()
+    fn.__code__ = res.to_code()
+    return fn
 
 
 if __name__ == "__main__":
-    test = pytternd({
-        (1,2,3): True,
-        (_v(1), _v(2), 4): False,
-        (_v(1), _v(2), _v(3)): "Huh?"
-    })
-    print(test[1,2,3])
-    print(test[1,2,4])
-    print(test[1,2,5])
+    @pyttern
+    def g(a, *b): {
+        (1, (2,)) : f"{a}, {b}",
+        (3, (4, 5)) : b,
+    }
+
+    print(g(1, 2))
+    print(g(3, 4, 5))
+    print(g(5, 6))
+
+    # @pyttern
+    # def f(): {
+    # }
+
+    # @pyttern
+    # def h(a, b): {
+        # (_1, _2) : _1 + _2,
+        # (2, _2) : 2
+    # }
+
