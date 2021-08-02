@@ -5,7 +5,7 @@ from pyttern.core import _fresh, _v, pytternd, NonExhaustivePatternError
 from fpy.composable.collections import is_, and_, or_
 from fpy.data.maybe import Just, Nothing, isJust, fromJust
 from fpy.experimental.do import do
-from fpy.parsec.parsec import one, many, neg
+from fpy.parsec.parsec import one, many, neg, skip
 from fpy.utils.placeholder import __
 
 isInstr = is_(bc.Instr)
@@ -81,12 +81,15 @@ def partitionInst(insts, n):
     pre, post = head.pre_and_post_stack_effect()
     # print(f"{pre = }")
     # print(f"{post= }")
-    if pre >= 0:
+    if pre > 0:
         if pre == n:
             return [head], insts[:-1]
         if pre < n:
             nxt, rst = partitionInst(insts[:-1], n - pre)
             return nxt + [head], rst
+    if pre == 0:
+        nxt, rst = partitionInst(insts[:-1], n - post)
+        return nxt + [head], rst
     pre = abs(pre)
     nxt, rst = partitionInst(insts[:-1], pre)
     if post == n:
@@ -173,7 +176,7 @@ def transVarMap(b, mk, fn_name, filename, args, fv):
 
 @do(Just)
 def _deco(rawbc, fn_name, filename, args, fv):
-    mapType = many(neg(or_(mkConstMap, mkMap))) >> (varMapEnding | constMapEnding)
+    mapType = many(skip(neg(or_(mkConstMap, mkMap))) | skip(one(or_(mkConstMap, mkMap)) >> neg(popTop)) | (varMapEnding | constMapEnding)) 
     mapEnding, rest <- mapType(rawbc)
     if rest:
         Nothing()
