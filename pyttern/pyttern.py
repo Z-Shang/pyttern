@@ -2,13 +2,11 @@ import bytecode as bc
 
 from pyttern.core import _fresh, _v, pytternd, NonExhaustivePatternError
 
-from fpy.data.function import id_, const
-from fpy.parsec.parsec import parser, ptrans, one, many, peek, neg
-from fpy.composable.function import func
-from fpy.utils.placeholder import __
-from fpy.composable.collections import is_, of_, and_, or_
-from fpy.experimental.do import do
+from fpy.composable.collections import is_, and_, or_
 from fpy.data.maybe import Just, Nothing, isJust, fromJust
+from fpy.experimental.do import do
+from fpy.parsec.parsec import one, many, neg
+from fpy.utils.placeholder import __
 
 isInstr = is_(bc.Instr)
 popTop = and_(isInstr, __.name == "POP_TOP")
