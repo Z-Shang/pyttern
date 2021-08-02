@@ -3,7 +3,9 @@
 Simple ans stupid pattern matching for Python
 
 ## Usage
+
 With the decorator `@pyttern`, you can do pattern matching easily with:
+
 ```python
 @pyttern
 def pat(a, b): {
@@ -18,4 +20,3 @@ pat(3, 4) => 4
 pat(10, 5) => 50
 pat(0, 0) => 100
 ```
-

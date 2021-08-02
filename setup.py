@@ -28,6 +28,7 @@ def main():
         "license": "MIT",
         "description": DESCRIPTION,
         "long_description": desc,
+        "long_description_content_type": "text/markdown",
         "url": "https://github.com/Z-Shang/pyttern",
         "author": "zshang",
         "author_email": "z@gilgamesh.me",
