@@ -141,12 +141,19 @@ def transVarMap(b, mk, fn_name, filename, args, fv):
         else:
             vbind = {}
             vpat = []
-            for i, v in enumerate(pat):
-                if isVar(v):
-                    vbind[v.arg] = args[i]
-                    vpat.append(bc.Instr("LOAD_CONST", _v(v.arg)))
+            mkTpl = pat[-1]
+            raw_pat_parts = pat[:-1]
+            pat_parts = []
+            while raw_pat_parts:
+                pat_part, raw_pat_parts = partitionInst(raw_pat_parts, 1)
+                pat_parts.append(pat_part)
+            for i, v in enumerate(reversed(pat_parts)):
+                if len(v) == 1 and isVar(v[0]):
+                    vbind[v[0].arg] = args[i]
+                    vpat.append(bc.Instr("LOAD_CONST", _v(v[0].arg)))
                 else:
-                    vpat.append(v)
+                    vpat.extend(v)
+            vpat.append(mkTpl)
             parts.append((vpat, exprToLambda(expr, fn_name, filename, args, fv, vbind)))
     if not hasDefault:
         defaultExpr = generateDefault(fn_name, filename, args)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-VERSION = "0.0.5"
+VERSION = "0.0.6"
 
 DESCRIPTION = "Python module for simple pattern matching"
 CLASSIFIERS = [

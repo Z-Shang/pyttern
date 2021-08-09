@@ -16,6 +16,9 @@ class _v:
     def __str__(self):
         return "#v<{}>".format(self.n)
 
+    def __call__(self, *args, **kw):
+        raise TypeError(f"_v Object is not callable, {self} called with: {args}, {kw}")
+
 class NonExhaustivePatternError(Exception):
     def __init__(self, msg):
         self.msg = msg
