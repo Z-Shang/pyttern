@@ -20,3 +20,5 @@ pat(3, 4) => 4
 pat(10, 5) => 50
 pat(0, 0) => 100
 ```
+
+For a more complex example, check out: [Tick](tests/tick.py)

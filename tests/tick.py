@@ -1,3 +1,8 @@
+"""
+CodeWars: Esolang: Tick
+https://www.codewars.com/kata/587edac2bdf76ea23500011a
+"""
+
 from pyttern.pyttern import pyttern
 from fpy.composable.collections import transN, apply
 from fpy.data.either import Left, Right, isRight, fromLeft
